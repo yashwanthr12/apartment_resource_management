@@ -10,6 +10,7 @@ import { adminRegister } from '../../services/authService';
 import { apiPost } from '../../services/api';
 import { Alert, InlineSpinner, ApartEaseLogo } from '../../components/ui';
 import LandingNavbar from '../../components/layout/LandingNavbar';
+import { validatePassword } from '../../utils/validation';
 
 export default function AdminRegister() {
   const [step, setStep] = useState(1);
@@ -156,6 +157,13 @@ export default function AdminRegister() {
   const handleStep3Next = (e) => {
     e.preventDefault();
     if (!passwordsMatch) return;
+    
+    const pwdValidation = validatePassword(form.password);
+    if (!pwdValidation.isValid) {
+      setAlert({ message: pwdValidation.message, type: 'danger' });
+      return;
+    }
+    
     setAlert(null);
     setStep(4);
   };
@@ -418,6 +426,8 @@ export default function AdminRegister() {
                 </div>
               </div>
             )}
+
+            <Alert message={alert?.message} type={alert?.type} onDismiss={() => setAlert(null)} />
 
             <form onSubmit={handleStep3Next} autoComplete="off">
               <div className="mb-3">

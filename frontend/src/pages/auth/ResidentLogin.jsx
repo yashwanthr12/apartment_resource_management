@@ -11,6 +11,7 @@ import { residentLogin } from '../../services/authService';
 import { Alert, InlineSpinner, ApartEaseLogo } from '../../components/ui';
 import LandingNavbar from '../../components/layout/LandingNavbar';
 import { apiPost } from '../../services/api';
+import { validatePassword } from '../../utils/validation';
 
 export default function ResidentLogin() {
   const [email, setEmail] = useState('');
@@ -152,6 +153,13 @@ export default function ResidentLogin() {
     }
     setLoading(true);
     setAlert(null);
+
+    const pwdValidation = validatePassword(newPassword);
+    if (!pwdValidation.isValid) {
+      setAlert({ message: pwdValidation.message, type: 'danger' });
+      setLoading(false);
+      return;
+    }
 
     const { ok, data } = await apiPost('/api/auth/reset-password', {
       email: forgotEmail.trim(),

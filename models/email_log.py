@@ -1,7 +1,7 @@
 """
 models/email_log.py
 -------------------
-SQLAlchemy model for logging email deliveries sent via Resend.
+SQLAlchemy model for logging email deliveries.
 """
 
 from datetime import datetime
@@ -29,7 +29,7 @@ class EmailLog(db.Model):
         nullable=True,
     )
     status = db.Column(db.String(50), nullable=False)  # 'success', 'failed'
-    message_id = db.Column(db.String(100), nullable=True)  # Resend message ID
+    message_id = db.Column(db.String(100), nullable=True)  # Unique delivery message ID
     failure_reason = db.Column(db.Text, nullable=True)
     sent_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 

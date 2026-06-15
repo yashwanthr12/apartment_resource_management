@@ -102,16 +102,36 @@ def handle_unexpected_error(e):
     return jsonify({"error": "An unexpected error occurred. Please contact the administrator."}), 500
 
 
-# ── Prevent browser caching of API responses (real-time data) ──
+# ── Prevent caching of API responses & Add Security Headers ──
 @app.after_request
-def add_no_cache_headers(response):
-    """Add no-cache headers to all API responses so dashboards always
-    reflect the latest database state without requiring logout/login."""
+def apply_headers(response):
+    """
+    Apply global HTTP security headers and no-cache policies for APIs.
+    """
+    # Global Security Headers
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Content Security Policy (CSP)
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+        "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' ws: wss:; "
+        "object-src 'none';"
+    )
+    response.headers["Content-Security-Policy"] = csp
+
+    # Disable caching for API responses to reflect real-time DB changes
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
 
 
 # ── Register Blueprints ──

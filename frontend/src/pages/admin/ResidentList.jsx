@@ -175,8 +175,8 @@ export default function ResidentList() {
         {/* Resident Payment Preview */}
         <div className="col-lg-8">
           <GlassCard style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div className="d-flex justify-content-between items-center mb-3">
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+              <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                 <h5 style={{ fontWeight: 700, margin: 0, fontSize: '15px' }}>
                   <i className="bi bi-people" style={{ marginRight: 8, color: 'var(--primary)' }}></i>
                   Resident Payment Preview
@@ -230,7 +230,7 @@ export default function ResidentList() {
 
             {/* Pagination Controls */}
             {selectedExp && residents.length > itemsPerPage && (
-              <div className="d-flex justify-content-center align-items-center gap-3 mt-auto pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+              <div className="d-flex justify-content-center align-items-center gap-3 mt-3 pt-3" style={{ borderTop: '1px solid var(--border)', width: '100%' }}>
                 <button
                   className="btn btn-outline-accent btn-sm"
                   disabled={currentPage === 1}

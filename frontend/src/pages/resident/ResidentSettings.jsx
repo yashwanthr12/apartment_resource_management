@@ -13,6 +13,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { apiPost } from '../../services/api';
 import { Alert, InlineSpinner, GlassCard } from '../../components/ui';
 import AppNavbar from '../../components/layout/AppNavbar';
+import { validatePassword } from '../../utils/validation';
 
 export default function ResidentSettings() {
   const { user, login, logout } = useAuth();
@@ -237,6 +238,13 @@ export default function ResidentSettings() {
     if (!passwordsMatch) return;
     setPwdLoading(true);
     setPwdAlert(null);
+
+    const pwdValidation = validatePassword(pwdForm.newPassword);
+    if (!pwdValidation.isValid) {
+      setPwdAlert({ message: pwdValidation.message, type: 'danger' });
+      setPwdLoading(false);
+      return;
+    }
 
     const { ok, data } = await apiPost('/api/auth/change-password', {
       current_email: user.email,

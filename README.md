@@ -11,7 +11,7 @@
 
 **ApartEase** is a comprehensive, production-grade SaaS-style platform designed to streamline operations, automate billing splits, track utility consumption, and manage payment verification for residential societies and apartment complexes.
 
-[Explore The Docs](file:///c:/Users/Admin/Desktop/final_year_project/docs/) · [Database Design](file:///c:/Users/Admin/Desktop/final_year_project/docs/database_schema.md) · [Resend Guide](file:///c:/Users/Admin/Desktop/final_year_project/docs/RESEND_BATCH_EMAIL_SETUP_GUIDE.md)
+[Explore The Docs](file:///c:/Users/Admin/Desktop/final_year_project/docs/) · [Database Design](file:///c:/Users/Admin/Desktop/final_year_project/docs/database_schema.md)
 
 </div>
 
@@ -27,7 +27,7 @@ Managing shared resources in modern residential complexes presents significant c
 
 ### 🌟 Project Highlights
 *   **Dynamic Split Factor Pricing**: Automates expense calculation based on proportional resident contribution factors (0.75x to 2.25x).
-*   **High-Volume Email Delivery**: Integrated with official **Resend Python SDK and Batch API** to chunk, secure via idempotency, and permissive-send up to 100 emails per request.
+*   **High-Volume Email Delivery**: Integrated with standard Gmail SMTP to sequentially send personalized billing alerts and breakdowns.
 *   **Tamper-Proof Receipt Generation**: Automatically constructs professional, formatted PDFs with vectorized branding badges using ReportLab upon admin payment verification.
 *   **Double-Lock Verification Workflow**: Restricts payment verification views to billed expenditures, stopping raw saved data leaks.
 
@@ -73,26 +73,31 @@ ApartEase replaces manual friction with transactional transparency. Admin-inputt
 ## 🚀 Key Features
 
 ### 👤 Secure Authentication & Signups
-*   **Role-Based Security**: Complete segregation between Admin and Resident portals.
-*   **Access Code Verification**: Residents join their exact apartment complex by supplying a unique adminaccess code, preventing orphan profile mapping.
-*   **Dual OTP Safeguards**: Integrated SMTP OTP verification protects critical account modifications.
+*   **Role-Based Security**: Complete segregation between Admin and Resident portals using dynamic cookie targeting (`admin_session` vs `resident_session`).
+*   **Access Code Verification**: Residents register by supplying a unique apartment access code (with automatic alphanumeric normalization support), preventing orphan profile mapping.
+*   **Dual OTP Safeguards**: Secure OTP verification for critical actions such as admin/resident registration, password recovery, email updates (dual OTP validation for both old and new addresses), and account disabling.
+*   **Failed Attempt Rate-Limiting**: Protects login endpoints by locking accounts for 5 minutes after 5 consecutive failures.
+*   **Password Policy Enforcement**: Validates that all passwords are 8-12 characters long and contain at least one uppercase, lowercase, numeric, and special character.
 
 ### 🏢 Apartment & Resident Management
-*   **Admin-Vetted Onboarding**: Unverified resident requests are held in a pending queue until approved.
-*   **Deactivation Grace Recovery**: Deactivated accounts receive a 24-hour grace window to restore. If exceeded, residents are automatically routed to the pending approval queue.
+*   **Admin-Vetted Onboarding**: Unverified resident requests are held in a pending queue until vetted and verified by the admin.
+*   **Deactivation Grace Recovery**: Deactivated accounts (scheduled for deletion) receive a 24-hour grace window to restore. If exceeded, the account is permanently deactivated.
+*   **Soft-Delete Reactivation**: Admins can soft-delete residents to keep transaction histories intact. If a soft-deleted resident attempts to log in, their account is reactivated but returned to the pending approval queue.
+*   **Variable Contribution Split**: Admins can customize proportional split factor multipliers (`0.75x`, `1.0x`, `1.5x`, `2.0x`, `2.25x`) for individual resident billing allocations.
 
 ### 📊 Billing & Expense Tracking
-*   **Grouped Multi-Category Expenditures**: Bundles various categories (water, electricity, elevator upkeep) under unified billing periods.
-*   **Aesthetic Simplified Preview**: Bill distribution preview displays clear cost categories and absolute totals, omitting confusing intermediate splits.
+*   **Grouped Multi-Category Expenditures**: Bundles multiple cost categories under unified date ranges to simplify resident payments.
+*   **Interactive Analytics Dashboard**: Visualizes billing data via monthly category Pie charts, month-over-month comparison Bar charts, resource usage Line charts (for tracking units used like kWh or liters), and Cost vs Usage Scatter charts.
+*   **Sanity Validations**: Validates that billing amounts are positive and prevents registering future dates to protect database integrity.
 
 ### 📧 Batch Notification Delivery
-*   **Resend Batch API**: Sends up to 100 personalized billing emails in a single request.
-*   **Permissive Error Mapping**: Valid entries compile and queue successfully even if other addresses are malformed.
-*   **24-Hour Idempotency Safeguards**: Prevent accidental duplicate email blasts during server retries.
+*   **SMTP Batch Mailing**: Sends personalized, styled HTML emails sequentially over an active, pooled SMTP connection.
+*   **Permissive Error Mapping**: Handles email sending failures gracefully; if one address fails, the system logs the failure and continues dispatching to other residents.
+*   **Email Delivery Logs**: Detailed database logging (`email_logs` table) recording statuses, message IDs, failure reasons, and timestamps.
 
 ### 🧾 Payments & PDF Receipts
-*   **Billed-Only Verification Workflow**: Limits payment reviews to billed entries, keeping unbilled drafts private.
-*   **ReportLab PDF Builder**: Generates digital receipts with vector brand signatures.
+*   **Billed-Only Verification Workflow**: Prevents verifying payments on unbilled drafts, keeping database records private.
+*   **ReportLab PDF Builder**: Generates formal, vector-decorated PDF billing receipts, including Indian Rupee symbol support (automatically fallback to Helvetica/Rs. if Arial fonts are absent on the host OS), verified badge signatures, and verification timestamps.
 
 ---
 
@@ -108,11 +113,21 @@ ApartEase uses a classic decoupled Model-View-Controller (MVC) style, serving a 
             └───────────────────────── [ SQLAlchemy ORM Models / MySQL DB ]
 ```
 
+### Architectural & Security Middleware
+*   **Dynamic Role-Based Session Interface**: The application implements a custom `RoleBasedSessionInterface` which overrides Flask's default session handling to dynamically look up and name cookie sessions (`admin_session` vs `resident_session`) depending on headers (`X-Session-Role`) and URL paths (`/api/admin` vs `/api/resident`). This prevents administrative session hijacking and allows users to run admin and resident portals side-by-side without session crossover.
+*   **Global Security Headers**: A middleware filter applies strong security protections on all responses:
+    *   `X-Frame-Options: DENY` (Blocks Clickjacking)
+    *   `X-Content-Type-Options: nosniff` (Blocks MIME sniffing)
+    *   `Referrer-Policy: strict-origin-when-cross-origin`
+    *   `Content-Security-Policy (CSP)` (Restricts scripts, styles, fonts, and image sources to local or trusted CDNs to block Cross-Site Scripting).
+*   **Real-time Cache Prevention**: Appends `Cache-Control: no-cache, no-store, must-revalidate` to all API responses so that client-side components always reflect real-time database transitions.
+
 ### Request Flow Workflow
 1.  **Client Request**: Resident logs in and uploads a payment receipt image (Vite SPA).
-2.  **API Gateway**: Flask middleware matches the session cookie and directs the payload to `payment.py` Blueprint.
-3.  **Business Logic**: The handler checks the record and updates the status to `'paid'` in the database.
-4.  **Database Sync**: The SQLAlchemy engine commits changes to MySQL and returns a JSON payload to the client.
+2.  **Session Routing & Middleware**: The request hits Flask. The `RoleBasedSessionInterface` targets `resident_session`, matching it with the logged-in session. Global middleware verifies that CSRF/CSP constraints are met and intercepts the payload.
+3.  **API Gateway & Authorization**: The request is routed to the `payment.py` Blueprint. The `login_required` and role decorators check permissions, ensuring the resident belongs to the requested apartment context.
+4.  **Business Logic**: The payment controller processes the receipt image upload, validates its extension types (preventing arbitrary script execution), saves the file in `static/uploads`, and updates the payment row to `'paid'`.
+5.  **Database Commit & Response**: SQLAlchemy commits the changes to MySQL, triggers no-cache headers on the response, and returns a JSON payload to update the frontend state.
 
 ---
 
@@ -124,6 +139,7 @@ ApartEase uses a classic decoupled Model-View-Controller (MVC) style, serving a 
 | **React** | `^19.1.0` | Core declarative components framework. |
 | **React Router DOM** | `^7.15.1` | Client-side routing engine. |
 | **Chart.js** | `^4.5.1` | Aggregates and plots usage analytics. |
+| **react-chartjs-2** | `^5.3.1` | React wrapper for Chart.js dashboards. |
 | **Vanilla CSS** | Standard | Modern styling using a custom dark/glassmorphic system. |
 
 ### Backend Service
@@ -133,8 +149,9 @@ ApartEase uses a classic decoupled Model-View-Controller (MVC) style, serving a 
 | **Flask** | `3.1.0` | Microservices API framework. |
 | **Flask-SQLAlchemy** | `3.1.1` | Relational Object Mapper (ORM). |
 | **Flask-Login** | `0.6.3` | Admin/Resident session management. |
-| **Resend SDK** | `2.29.0` | High-volume batch email delivery. |
 | **ReportLab** | `4.5.1` | Transactional PDF receipt builder. |
+| **bcrypt** | `^4.2.1` | Secure password and OTP hashing library. |
+| **PyMySQL** | `^1.1.1` | Pure-Python MySQL client driver. |
 
 ---
 
@@ -145,38 +162,45 @@ final_year_project/
 ├── database/                    # Relational SQL schemas and migrations
 │   ├── schema.sql               # Core DDL tables script
 │   └── migrate_*.py             # Custom DB update migrations
-├── docs/                        # Architectural specifications and guides
+├── docs/                        # Architectural specifications and guides (templates)
 │   ├── database_schema.md       # Interactive ER diagrams and maps
-│   ├── OTP_README.md            # SMTP OTP configurations
-│   └── RESEND_BATCH_EMAIL_*.md  # Resend setup specifications
+│   └── OTP_README.md            # SMTP OTP configurations
 ├── frontend/                    # Single-Page-Application source
 │   ├── public/                  # Public web graphics and templates
 │   ├── src/                     # React component components and context
 │   │   ├── components/          # Reusable Glassmorphic UI library
+│   │   ├── hooks/               # Custom React hooks
 │   │   ├── pages/               # Views (Dashboard, Settings, Bill Distribution)
-│   │   └── services/            # Client-side API abstraction wrappers
+│   │   │   ├── admin/           # Admin-only pages (Analytics, Payment Verification, Resident List)
+│   │   │   ├── auth/            # Registration and login forms for both roles
+│   │   │   └── resident/        # Resident dashboards, settings, and histories
+│   │   ├── services/            # Client-side API abstraction wrappers
+│   │   └── utils/               # Formatting and calculation helpers
 │   └── package.json             # NPM package lists
 ├── models/                      # SQLAlchemy database models mapping to MySQL tables
 │   ├── __init__.py              # Central db connector and registration exports
-│   ├── admin.py                 # Admin profile
-│   ├── resident.py              # Resident profile and split factors
-│   ├── expenditure.py           # Monthly billing sessions
-│   ├── expense.py               # Cost categories
-│   ├── bill.py                  # Individual tenant invoice
-│   ├── payment.py               # Payment status
-│   └── email_log.py             # Transactional batch delivery logs
-├── routes/                      # API controllers (Flask Blueprints)
-│   ├── auth.py                  # Gatekeepers (Login/Register)
-│   ├── admin.py                 # Management APIs
-│   ├── bill.py                  # Bill calculations and delivery commands
-│   ├── payment.py               # Verification uploads and PDF generator
-│   └── email_service.py         # Resend batch chunking pipelines
+│   ├── admin.py                 # Admin profile, UPI ID, deactivation request, credentials
+│   ├── resident.py              # Resident profile, active status, split factors
+│   ├── expenditure.py           # Monthly billing sessions and base rate calculations
+│   ├── expense.py               # Cost categories and resource usage units
+│   ├── bill.py                  # Individual tenant invoice records
+│   ├── payment.py               # Payment status, receipt paths, verification state
+│   ├── email_log.py             # Transactional batch delivery logs
+│   └── otp_verification.py      # Secure OTP verification records (bcrypt hashes)
+├── routes/                      # API controllers (Flask Blueprints & helper services)
+│   ├── auth.py                  # Gatekeepers (Login/Register, profile updates, security resets)
+│   ├── admin.py                 # Management APIs (onboarding, payment settings, split values)
+│   ├── bill.py                  # Bill calculations, date filtering, and generation commands
+│   ├── payment.py               # Verification uploads and ReportLab PDF receipt builder
+│   ├── email_service.py         # Billing notification SMTP pipelines and log commits
+│   ├── analytics.py             # Category breakdown, MoM comparison, cost vs usage APIs
+│   └── otp_service.py           # Verification code lifecycles, rate limiting, and HTML templates
 ├── static/                      # Flask static bundles and storage
 │   ├── react/                   # Production compiled Vite assets
-│   └── uploads/                 # Local directory for user receipt images
+│   └── uploads/                 # Local directory for user receipt and QR code images
 ├── .env.example                 # Environment configuration template
 ├── .gitignore                   # Exclusions list
-├── app.py                       # Main application entry point
+├── app.py                       # Main application entry point (registers session role interface and CSP)
 ├── config.py                    # Environment settings loader
 ├── requirements.txt             # Python libraries
 └── README.md                    # Core project presentation page
@@ -199,16 +223,26 @@ erDiagram
     residents ||--o{ payments : "makes"
     bills ||--o{ payments : "paid_by"
     residents ||--o{ email_logs : "audits"
+    otp_verifications {
+        int id PK
+        string email
+        string otp_hash
+        string purpose
+        string status
+        datetime created_at
+        datetime expires_at
+    }
 ```
 
 ### Table Specifications
-1.  **admins**: Stores administrative profile, unique access code, UPI ID, and bank details.
-2.  **residents**: Manages resident details, verified state, and `split_number` (contribution factor).
-3.  **expenditures**: Represents a monthly billing period session with totals and per-person base rates.
-4.  **expenses**: Tracks categories (electricity, water, maintenance) linked to an expenditure.
-5.  **bills**: Links a single resident to an expense, defining their calculated split amount.
-6.  **payments**: Tracks payment receipt image paths, approval status (`pending`, `approved`, `rejected`), and timestamps.
-7.  **email_logs**: Audits batch emailing transactions, storing statuses, message IDs, and failure reasons.
+1.  **admins**: Stores administrative profile credentials, unique `access_code` for residents, `upi_id`, detailed bank configurations (`bank_name`, `account_holder_name`, `account_number`, `ifsc_code`, `branch_name`), custom `qr_code` path, and `deactivation_requested_at` grace timestamp.
+2.  **residents**: Manages resident credentials, `house_number`, verified state (`is_verified`), active state (`is_active` for soft-deletes), deactivation grace timestamps, and `split_number` (representing the proportional contribution factor).
+3.  **expenditures**: Groups multiple monthly category expenses under `from_date` and `to_date` ranges, storing the `total_amount`, total apartment count (`total_houses`), and the calculated baseline split `per_person_amount`.
+4.  **expenses**: Tracks individual utility costs, supporting category enums (`'electricity'`, `'water'`, `'maintenance'`, `'security'`, `'elevator'`, `'other'`), custom category labels, amounts, and specific resource units (`units_used`, `unit_type`). Optionally linked to a parent `expenditure_id`.
+5.  **bills**: Links a single resident to an expense, calculating their custom portion (`split_amount`) factoring in their resident contribution split number.
+6.  **payments**: Maps to `bills`, storing approval state (`status`: `'pending'`, `'paid'`, `'rejected'`), user receipt screenshot file paths (`receipt_image`), verification confirmation (`verified` boolean), and update timestamps.
+7.  **email_logs**: Audits batch notification transactions, storing the `recipient_email`, foreign keys to resident/bill/expenditure, status (`'success'` / `'failed'`), message reference IDs, and failure detail logs.
+8.  **otp_verifications**: Standalone security log mapping verification requests, containing the hashed verification code (`otp_hash`), purpose (e.g. `'admin-register'`, `'change-email-current'`), validation `status` (`'pending'`, `'verified'`, `'expired'`, `'used'`), and expiration timestamps.
 
 ---
 
@@ -257,6 +291,7 @@ Create a `.env` file in the project root based on `.env.example`:
 # Flask Setup
 SECRET_KEY=generate-a-strong-random-key-string
 FLASK_DEBUG=True
+SESSION_COOKIE_SECURE=False
 
 # Database Credentials
 DB_HOST=127.0.0.1
@@ -275,10 +310,13 @@ SMTP_PORT=465
 SMTP_USERNAME=your-gmail@gmail.com
 SMTP_PASSWORD=your-gmail-app-password
 SMTP_USE_SSL=True
+EMAIL_FROM=apartease.billing@gmail.com
 
-# Resend API Details
-RESEND_API_KEY=re_your_copied_api_key_from_dashboard
-RESEND_FROM_EMAIL=billing@yourdomain.com
+# SMTP Billing Configurations
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_EMAIL=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
 APP_URL=http://localhost:5000
 ```
 
@@ -318,23 +356,35 @@ This runs the Vite server on `http://localhost:5173/`, proxying API calls to the
 
 ## 👥 User Roles & Permissions
 
+### Onboarding & Authentication Flows
+*   **Registration Security**: Admins register directly and define their unique access code. Residents must supply this access code to join. Both registrations require OTP email verification before records are committed.
+*   **Onboarding Verification**: All registered residents are placed in a pending state and cannot log in. Admins must manually approve residents under the "Verify Residents" screen to authorize access.
+*   **Login Lock Policy**: If any user fails login credentials 5 consecutive times, they are locked out of the system for 5 minutes.
+*   **Deactivation Grace Recovery**: When a user disables their account, the record is flagged with a 24-hour grace timestamp. If they log in within 24 hours, they are offered an option to restore their account instantly. Otherwise, the account is permanently deactivated.
+*   **Resident Reactivation Queue**: When admins soft-delete an active resident, their `is_active` is flagged False. If that resident attempts to log in again, their `is_active` status is restored to True, but their `is_verified` flag is set to False, immediately routing them back to the admin's pending approval queue.
+
 ### 👑 Administrator Role
 *   **Permitted Actions**:
-    *   Verify or reject resident onboardings.
+    *   Verify or reject resident onboardings in the pending approval queue.
+    *   Soft-delete verified residents to restrict access while preserving billing logs.
     *   Adjust resident split factor coefficients (`0.75x`, `1.0x`, `1.5x`, `2.0x`, `2.25x`).
-    *   Record society expenditures and categories.
-    *   Edit unsent expenditure details.
-    *   Distribute monthly bills with automated split calculations.
-    *   Trigger automated Resend batch email alerts.
-    *   Verify transaction receipts and approve/reject payments.
+    *   Record society expenditures with multiple custom category breakdowns.
+    *   Edit/update unsent expenditure details and delete old linked expenses automatically.
+    *   Distribute monthly bills with proportional split factor allocations.
+    *   Trigger automated SMTP batch billing alerts to all billed residents.
+    *   Update payment settings (UPI ID, bank particulars, QR codes) with safe file type checks.
+    *   Verify transaction receipts and approve or reject resident payments.
 
 ### 🏠 Resident Role
 *   **Permitted Actions**:
-    *   Register using their apartment's unique access code.
-    *   View current billing status and previous breakdowns (water, power).
-    *   Track historical trends using custom usage charts.
+    *   Register using their apartment's unique access code (with case/space normalization).
+    *   View current billing status and previous breakdowns (electricity, water, maintenance).
+    *   Filter historical bills by year and custom date range.
+    *   Track historical consumption and split costs using interactive dashboards and charts.
     *   Upload transaction screenshots to submit payment.
-    *   Download verified, professional PDF billing receipts.
+    *   Manage profile settings (update name, change password with policy checks, update email via double-OTP verification).
+    *   Schedule account deactivation with a 24-hour recovery grace window.
+    *   Download verified, professional PDF billing receipts with verified badge signatures.
 
 ---
 
@@ -359,8 +409,33 @@ Below are placeholder layouts mapping out the glassmorphic designs:
 DROP TABLE IF EXISTS email_logs;
 ```
 
-#### Q: Emails are failing to deliver with `Unauthorized` alerts.
-**A**: Double-check your `.env` `RESEND_API_KEY`. If using sandbox credentials, ensure you are sending test emails **only to your registered account owner's email address**.
+#### Q: Emails are failing to deliver.
+**A**: Double-check your `.env` `SMTP_EMAIL` and `SMTP_PASSWORD`. Ensure SMTP access is enabled on your email provider and your credentials are correct.
+
+#### Q: I am not receiving OTP verification emails during development.
+**A**: If SMTP credentials are not configured in your `.env` file, the application falls back to development logging. Check your Flask server console/terminal outputs to find the printed OTP verification codes.
+
+#### Q: The Indian Rupee symbol is displaying as "Rs." instead of "₹" in downloaded PDF receipts.
+**A**: ReportLab constructs "₹" using the system's local TrueType font files. The system attempts to load `Arial` and `Arial-Bold` from Windows fonts directory. If the TrueType fonts are not available on the hosting operating system, it falls back to standard Helvetica and displays "Rs. " for formatting safety.
+
+#### Q: Residents cannot log in and receive "Admin verification is required" errors.
+**A**: Upon registration, resident accounts are inactive/unverified by default. The administrator must log into the Admin cockpit, go to "Verify Residents", and approve their onboarding request.
+
+#### Q: My login request returns a "Too many login attempts" error.
+**A**: To protect accounts from brute-force exploits, the endpoint blocks logins for 5 minutes after 5 failed password attempts. Wait 5 minutes for the rate-limit window to reset automatically.
+
+---
+
+## 🔄 Recent Updates & Optimizations
+
+ApartEase has undergone several major upgrades to reach a production-ready, secure, and highly transparent state:
+*   **Interactive Analytics Dashboards**: Integrated frontend `react-chartjs-2` widgets coupled with database-driven `/api/analytics` aggregators, showcasing monthly category breakdowns (Pie), MoM billing progressions (Bar), resource consumption tracks (Line), and cost correlation patterns (Scatter).
+*   **Dual-OTP Profile Security**: Built multi-step OTP procedures verifying email changes by confirming ownership of both the current and new email addresses sequentially.
+*   **Indian Rupee PDF Receipt Builder**: Enhanced the PDF generator with vector graphics branding, table-based breakdowns, green verified status alerts, and cross-platform Arial/Helvetica font bindings.
+*   **Exploit Sanity Protections**: Implemented checks blocking negative expense inputs, future billing periods, and unsafe file extension uploads.
+*   **Login Lock Rate-Limiter**: Added in-memory tracking blocking brute-force attacks after 5 password failures.
+*   **Deactivation & Recovery Grace Windows**: Implemented deactivation scheduling with 24-hour restoration windows, as well as automatic queue routing on soft-deleted account logins.
+*   **SMTP Connection Pooling**: Optimized sequential dispatching in SMTP batch processes to avoid connection overhead and timeouts during large society billing alerts.
 
 ---
 

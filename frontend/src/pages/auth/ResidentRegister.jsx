@@ -11,6 +11,7 @@ import { residentRegister } from '../../services/authService';
 import { apiGet, apiPost } from '../../services/api';
 import { Alert, InlineSpinner, ApartEaseLogo } from '../../components/ui';
 import LandingNavbar from '../../components/layout/LandingNavbar';
+import { validatePassword } from '../../utils/validation';
 
 export default function ResidentRegister() {
   useEffect(() => {
@@ -213,6 +214,13 @@ export default function ResidentRegister() {
   const handleStep3Next = (e) => {
     e.preventDefault();
     if (!passwordsMatch) return;
+    
+    const pwdValidation = validatePassword(form.password);
+    if (!pwdValidation.isValid) {
+      setAlert({ message: pwdValidation.message, type: 'danger' });
+      return;
+    }
+    
     setAlert(null);
     setStep(4);
   };
@@ -536,6 +544,8 @@ export default function ResidentRegister() {
 
             <h2>Create Password</h2>
             <p className="auth-subtitle">Step 3: Secure your resident account</p>
+
+            <Alert message={alert?.message} type={alert?.type} onDismiss={() => setAlert(null)} />
 
             <form onSubmit={handleStep3Next} autoComplete="off">
               <div className="mb-3">

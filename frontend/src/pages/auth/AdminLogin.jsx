@@ -12,6 +12,7 @@ import { adminLogin } from '../../services/authService';
 import { Alert, InlineSpinner, ApartEaseLogo } from '../../components/ui';
 import LandingNavbar from '../../components/layout/LandingNavbar';
 import { apiPost } from '../../services/api';
+import { validatePassword } from '../../utils/validation';
 
 export default function AdminLogin() {
   const [email, setEmail] = useState('');
@@ -153,6 +154,13 @@ export default function AdminLogin() {
     }
     setLoading(true);
     setAlert(null);
+
+    const pwdValidation = validatePassword(newPassword);
+    if (!pwdValidation.isValid) {
+      setAlert({ message: pwdValidation.message, type: 'danger' });
+      setLoading(false);
+      return;
+    }
 
     const { ok, data } = await apiPost('/api/auth/reset-password', {
       email: forgotEmail.trim(),

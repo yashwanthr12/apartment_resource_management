@@ -126,6 +126,32 @@ def _reset_attempts(email):
         del _failed_attempts[email]
 
 
+def validate_password_strength(password):
+    """
+    Validate password strength against policy:
+    - Minimum 8 characters
+    - Maximum 12 characters
+    - At least 1 uppercase letter (A-Z)
+    - At least 1 lowercase letter (a-z)
+    - At least 1 number (0-9)
+    - At least 1 special character (!@#$%^&*()_+-=[]{}|;:,.<>?)
+    """
+    if not password or not isinstance(password, str):
+        return False, "Password is required."
+    if len(password) < 8 or len(password) > 12:
+        return False, "Password must be between 8 and 12 characters."
+    if not any('A' <= c <= 'Z' for c in password):
+        return False, "Password must contain at least one uppercase letter."
+    if not any('a' <= c <= 'z' for c in password):
+        return False, "Password must contain at least one lowercase letter."
+    if not any('0' <= c <= '9' for c in password):
+        return False, "Password must contain at least one number."
+    special_chars = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    if not any(c in special_chars for c in password):
+        return False, "Password must contain at least one special character."
+    return True, "Password meets all security requirements."
+
+
 # ─── Admin Registration ──────────────────────────────────────
 @auth_bp.route("/api/admin/register", methods=["POST"])
 def admin_register():
@@ -140,6 +166,12 @@ def admin_register():
     for field in required:
         if not data.get(field):
             return jsonify({"error": f"'{field}' is required"}), 400
+
+    # Validate password strength
+    password = data.get("password", "")
+    is_valid_pwd, pwd_error = validate_password_strength(password)
+    if not is_valid_pwd:
+        return jsonify({"error": pwd_error}), 400
 
     access_code = (data.get("access_code") or data.get("accessCode", "")).strip().upper()
     if not access_code:
@@ -275,6 +307,12 @@ def resident_register():
     for field in required:
         if not data.get(field):
             return jsonify({"error": f"'{field}' is required"}), 400
+
+    # Validate password strength
+    password = data.get("password", "")
+    is_valid_pwd, pwd_error = validate_password_strength(password)
+    if not is_valid_pwd:
+        return jsonify({"error": pwd_error}), 400
 
     # Sanitize and validate email
     email = data["email"].strip().lower()
@@ -525,6 +563,11 @@ def change_password():
     if not new_password:
         return jsonify({"error": "New password is required"}), 400
 
+    # Validate password strength
+    is_valid_pwd, pwd_error = validate_password_strength(new_password)
+    if not is_valid_pwd:
+        return jsonify({"error": pwd_error}), 400
+
     # Enforce OTP consumption
     from routes.otp_service import consume_verified_otp
     if not consume_verified_otp(current_user.email, "change-password"):
@@ -560,10 +603,11 @@ def disable_account():
 
 
 @auth_bp.route("/api/auth/restore-account", methods=["POST"])
+@login_required
 def restore_account():
     """
     Fully restores account within 24-hour grace period.
-    Expected JSON: { email, role } (unauthenticated request because it intercepts login screen)
+    Only allows authenticated users to restore their own account.
     """
     data = request.get_json() or {}
     email = data.get("email", "").strip().lower()
@@ -573,8 +617,12 @@ def restore_account():
         return jsonify({"error": "Email and role are required"}), 400
         
     if role == "admin":
+        if session.get("role") != "admin" or current_user.email != email:
+            return jsonify({"error": "Unauthorized"}), 403
         user = Admin.query.filter_by(email=email).first()
     elif role == "resident":
+        if session.get("role") != "resident" or current_user.email != email:
+            return jsonify({"error": "Unauthorized"}), 403
         user = Resident.query.filter_by(email=email).first()
     else:
         return jsonify({"error": "Invalid role specified"}), 400
@@ -586,11 +634,8 @@ def restore_account():
     user.deactivation_requested_at = None
     db.session.commit()
     
-    # Establish session
-    login_user(user)
-    session["role"] = role
-    
     return jsonify({"message": "Account successfully restored!", "user": user.to_dict()})
+
 
 
 @auth_bp.route("/api/auth/reset-password", methods=["POST"])
@@ -607,6 +652,11 @@ def reset_password():
     if not email or not role or not new_password:
         return jsonify({"error": "Email, role, and new password are required"}), 400
         
+    # Validate password strength
+    is_valid_pwd, pwd_error = validate_password_strength(new_password)
+    if not is_valid_pwd:
+        return jsonify({"error": pwd_error}), 400
+
     purpose = f"forgot-password-{role}"
     
     # Enforce OTP consumption

@@ -8,6 +8,7 @@ Payment management routes:
 
 import os
 import io
+import html
 from flask import Blueprint, request, jsonify, session, current_app, send_file
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
@@ -186,8 +187,8 @@ def download_receipt(payment_id):
 
     # Query Admin for additional apartment details (address and name)
     admin = Admin.query.filter_by(apartment_name=expense.apartment_name).first()
-    admin_name = admin.name if admin else "Apartment Administrator"
-    apartment_address = admin.apartment_address if admin else "Apartment Address"
+    admin_name = html.escape(admin.name if admin else "Apartment Administrator")
+    apartment_address = html.escape(admin.apartment_address if admin else "Apartment Address")
 
     # Font Setup for Indian Rupee Symbol support on Windows
     try:
@@ -208,13 +209,15 @@ def download_receipt(payment_id):
     RUPEE_SYMBOL = "₹" if FONT_FAMILY == 'Arial' else "Rs. "
 
     # Gather data
-    apartment_name = expense.apartment_name
+    apartment_name = html.escape(expense.apartment_name)
     from_date = expense.from_date.strftime("%d %b %Y")
     to_date = expense.to_date.strftime("%d %b %Y")
     total_original_amount = 0
     total_houses = expense.total_houses
     split_amount = float(bill.split_amount)
     contribution_factor = resident.split_number
+    resident_name = html.escape(resident.name)
+    resident_house_number = html.escape(resident.house_number)
 
     items = []
     if expense.expenditure_id:
@@ -227,11 +230,11 @@ def download_receipt(payment_id):
             for e in expenditure.items:
                 cat_name = e.custom_category if (e.category == "other" and e.custom_category) else e.category.capitalize()
                 amt = float(e.amount)
-                items.append([cat_name, f"{RUPEE_SYMBOL}{amt:,.2f}"])
+                items.append([html.escape(cat_name), f"{RUPEE_SYMBOL}{amt:,.2f}"])
     else:
         cat_name = expense.custom_category if (expense.category == "other" and expense.custom_category) else expense.category.capitalize()
         total_original_amount = float(expense.amount)
-        items.append([cat_name, f"{RUPEE_SYMBOL}{total_original_amount:,.2f}"])
+        items.append([html.escape(cat_name), f"{RUPEE_SYMBOL}{total_original_amount:,.2f}"])
 
     items.append(["Total Expenditure Amount", f"{RUPEE_SYMBOL}{total_original_amount:,.2f}"])
 
@@ -402,8 +405,8 @@ def download_receipt(payment_id):
     # 3. Receipt Information
     Story.append(Paragraph("Expense Bill Receipt", styles["SectionHeading"]))
     receipt_info_data = [
-        [Paragraph("Resident Name:", styles["ReceiptLabel"]), Paragraph(resident.name, styles["ReceiptValueBold"])],
-        [Paragraph("Flat Number:", styles["ReceiptLabel"]), Paragraph(resident.house_number, styles["ReceiptValue"])],
+        [Paragraph("Resident Name:", styles["ReceiptLabel"]), Paragraph(resident_name, styles["ReceiptValueBold"])],
+        [Paragraph("Flat Number:", styles["ReceiptLabel"]), Paragraph(resident_house_number, styles["ReceiptValue"])],
         [Paragraph("Billing Period:", styles["ReceiptLabel"]), Paragraph(f"{from_date} — {to_date}", styles["ReceiptValue"])],
     ]
     receipt_info_table = Table(receipt_info_data, colWidths=[140, 364])

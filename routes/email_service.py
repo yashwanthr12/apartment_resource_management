@@ -1,13 +1,17 @@
 """
 routes/email_service.py
 -----------------------
-Helper module for sending emails via the Resend API.
+Helper module for sending emails via Gmail SMTP.
 If the API key is not configured, emails are silently skipped
 (a warning is logged instead).
 """
 
 import logging
+import html
 from flask import current_app
+import smtplib
+import ssl
+from email.message import EmailMessage
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +26,29 @@ def send_bill_email(resident, bill, admin):
     bill     : Bill model instance (with .expense loaded)
     admin    : Admin model instance (apartment owner)
     """
-    api_key = current_app.config.get("RESEND_API_KEY", "")
-    if not api_key or api_key == "re_your_api_key_here":
+    smtp_host = current_app.config.get("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = current_app.config.get("SMTP_PORT", 465)
+    smtp_email = current_app.config.get("SMTP_EMAIL", "")
+    smtp_password = current_app.config.get("SMTP_PASSWORD", "")
+
+    if not smtp_email or not smtp_password:
         logger.warning(
-            "Resend API key not configured — skipping email to %s", resident.email
+            "SMTP credentials not configured — skipping email to %s", resident.email
         )
         return False
 
     try:
-        import resend
-        resend.api_key = api_key
-
         # Build a simple HTML email body
         category = bill.expense.custom_category if bill.expense.category == "other" else bill.expense.category
         period = f"{bill.expense.from_date} → {bill.expense.to_date}"
+
+        escaped_resident_name = html.escape(resident.name)
+        escaped_apartment_name = html.escape(resident.apartment_name)
+        escaped_category = html.escape(category)
+        escaped_period = html.escape(period)
+        escaped_house_number = html.escape(resident.house_number)
+        escaped_upi_id = html.escape(admin.upi_id) if admin.upi_id else ""
+        escaped_bank_details = html.escape(admin.bank_details) if admin.bank_details else ""
 
         html_body = f"""
         <div style="font-family: 'Inter', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0; border-radius: 12px; overflow: hidden;">
@@ -43,48 +56,58 @@ def send_bill_email(resident, bill, admin):
                 <h1 style="color: #fff; margin: 0; font-size: 22px;">🏠 Apartment Bill Notification</h1>
             </div>
             <div style="padding: 28px;">
-                <p style="font-size: 16px;">Hello <strong>{resident.name}</strong>,</p>
-                <p>A new bill has been generated for your apartment <strong>{resident.apartment_name}</strong>.</p>
-
+                <p style="font-size: 16px;">Hello <strong>{escaped_resident_name}</strong>,</p>
+                <p>A new bill has been generated for your apartment <strong>{escaped_apartment_name}</strong>.</p>
+ 
                 <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
                     <tr style="background: #f3f4f6;">
                         <td style="padding: 10px; font-weight: 600;">Category</td>
-                        <td style="padding: 10px;">{category.title()}</td>
+                        <td style="padding: 10px;">{escaped_category.title()}</td>
                     </tr>
                     <tr>
                         <td style="padding: 10px; font-weight: 600;">Period</td>
-                        <td style="padding: 10px;">{period}</td>
+                        <td style="padding: 10px;">{escaped_period}</td>
                     </tr>
                     <tr style="background: #f3f4f6;">
                         <td style="padding: 10px; font-weight: 600;">House Number</td>
-                        <td style="padding: 10px;">{resident.house_number}</td>
+                        <td style="padding: 10px;">{escaped_house_number}</td>
                     </tr>
                     <tr>
                         <td style="padding: 10px; font-weight: 600;">Amount Due</td>
                         <td style="padding: 10px; color: #6366f1; font-size: 18px; font-weight: 700;">₹{float(bill.split_amount):,.2f}</td>
                     </tr>
                 </table>
-
+ 
                 <p><strong>Payment Instructions:</strong></p>
                 <ul style="line-height: 1.8;">
-                    {"<li>UPI ID: <code>" + admin.upi_id + "</code></li>" if admin.upi_id else ""}
-                    {"<li>Bank Details: " + admin.bank_details + "</li>" if admin.bank_details else ""}
+                    {"<li>UPI ID: <code>" + escaped_upi_id + "</code></li>" if escaped_upi_id else ""}
+                    {"<li>Bank Details: " + escaped_bank_details + "</li>" if escaped_bank_details else ""}
                     <li>After payment, log in and upload your receipt screenshot.</li>
                 </ul>
-
+ 
                 <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">This is an automated email. Please do not reply.</p>
             </div>
         </div>
         """
 
-        email_from = current_app.config.get("EMAIL_FROM", "onboarding@resend.dev")
+        msg = EmailMessage()
+        msg["Subject"] = f"New Bill: {category.title()} — ₹{float(bill.split_amount):,.2f}"
+        msg["From"] = f"ApartEase <{smtp_email}>"
+        msg["To"] = resident.email
+        msg.set_content(f"A new bill has been generated for your apartment. Please log in to view it.")
+        msg.add_alternative(html_body, subtype="html")
 
-        resend.Emails.send({
-            "from": email_from,
-            "to": [resident.email],
-            "subject": f"New Bill: {category.title()} — ₹{float(bill.split_amount):,.2f}",
-            "html": html_body,
-        })
+        if smtp_port == 465:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+                server.login(smtp_email, smtp_password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_email, smtp_password)
+                server.send_message(msg)
+
         logger.info("Email sent to %s for bill #%s", resident.email, bill.id)
         return True
 
@@ -93,7 +116,7 @@ def send_bill_email(resident, bill, admin):
         return False
 
 
-# ── Batch Email (Resend Batch API) ────────────────────────────
+# ── Batch Email (SMTP) ────────────────────────────
 
 def _format_date_email(date_val):
     """Format a date object as 'DD MMM YYYY' for emails."""
@@ -108,20 +131,22 @@ def _format_date_email(date_val):
 
 def send_batch_bill_emails(residents_bills, admin, expense):
     """
-    Send bill notification emails to ALL residents in a single batch call
-    using the Resend Batch API, chunked into blocks of max 100 emails.
-    Logs each transaction status, sent time, message ID, and failure reason.
+    Send bill notification emails to ALL residents using SMTP.
+    Logs each transaction status, sent time, and failure reason in EmailLog.
     """
-    import resend
     from models import db
     from models.email_log import EmailLog
     from models.expenditure import Expenditure
     from models.expense import Expense as ExpenseModel
     from datetime import datetime
 
-    api_key = current_app.config.get("RESEND_API_KEY", "")
-    if not api_key or api_key == "re_your_api_key_here":
-        logger.warning("Resend API key not configured — skipping batch emails")
+    smtp_host = current_app.config.get("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = current_app.config.get("SMTP_PORT", 465)
+    smtp_email = current_app.config.get("SMTP_EMAIL", "")
+    smtp_password = current_app.config.get("SMTP_PASSWORD", "")
+
+    if not smtp_email or not smtp_password:
+        logger.warning("SMTP credentials not configured — skipping batch emails")
         return [
             {"resident": r.name, "email_sent": False}
             for r, _ in residents_bills
@@ -130,10 +155,8 @@ def send_batch_bill_emails(residents_bills, admin, expense):
     if not residents_bills:
         return []
 
-    resend.api_key = api_key
-    email_from = current_app.config.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
     app_url = current_app.config.get("APP_URL", "http://localhost:5000")
-    from_address = f"ApartEase <{email_from}>"
+    from_address = f"ApartEase <{smtp_email}>"
     apartment_name = admin.apartment_name
 
     # ── Fetch expenditure-based details if available ──
@@ -298,142 +321,115 @@ def send_batch_bill_emails(residents_bills, admin, expense):
 </body>
 </html>"""
 
-    # Compile the full list of send parameters
-    all_params = []
-    for resident, bill in residents_bills:
-        category_rows = ""
-        for idx, item in enumerate(expense_items):
-            cat_name = (
-                item.custom_category
-                if item.category == "other" and item.custom_category
-                else item.category
+    # Establish SMTP connection
+    try:
+        if smtp_port == 465:
+            context = ssl.create_default_context()
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, context=context)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port)
+            server.starttls()
+        server.login(smtp_email, smtp_password)
+    except Exception as connection_exc:
+        logger.error("Failed to connect to SMTP server: %s", connection_exc)
+        email_results = []
+        for res, bill in residents_bills:
+            log = EmailLog(
+                recipient_email=res.email,
+                resident_id=res.id,
+                bill_id=bill.id,
+                expenditure_id=expenditure.id if expenditure else None,
+                status="failed",
+                failure_reason=f"SMTP Connection/Auth failed: {str(connection_exc)}",
+                sent_at=datetime.utcnow()
             )
-            bg = 'style="background-color: #f8fafc;"' if idx % 2 == 0 else ""
-            category_rows += f"""
-            <tr {bg} style="border-bottom: 1px solid #f1f5f9;">
-                <td style="padding: 10px 12px; color: #334155; text-align: left;">{cat_name.title()}</td>
-                <td align="right" style="padding: 10px 12px; color: #334155; font-weight: 600; text-align: right;">₹{float(item.amount):,.2f}</td>
-            </tr>"""
-
-        personalized_html = html_template.format(
-            from_date=from_date_str,
-            to_date=to_date_str,
-            apartment_name=apartment_name,
-            admin_name=admin.name,
-            resident_name=resident.name,
-            category_rows=category_rows,
-            total_expenditure_formatted=f"{total_amount:,.2f}",
-            flat_number=resident.house_number,
-            split_factor=f"{resident.split_number:.1f}",
-            included_houses=total_houses,
-            amount_payable_formatted=f"{float(bill.split_amount):,.2f}",
-            app_url=app_url
-        )
-
-        bill_subject = f"Expenditure Bill Generated — Flat {resident.house_number} — ₹{float(bill.split_amount):,.2f}"
-        
-        all_params.append({
-            "from": from_address,
-            "to": [resident.email],
-            "subject": bill_subject,
-            "html": personalized_html
-        })
-
-    # Send in chunks of 100
-    chunk_size = 100
-    email_results = []
-    
-    for i in range(0, len(all_params), chunk_size):
-        batch_params = all_params[i:i + chunk_size]
-        batch_residents_bills = residents_bills[i:i + chunk_size]
-        
-        # Unique deterministic idempotency key per sub-batch valid for 24 hours
-        sub_batch_index = (i // chunk_size) + 1
-        ref_id = expenditure.id if expenditure else expense.id
-        ref_type = "expenditure" if expenditure else "expense"
-        idempotency_key = f"batch-{ref_type}-{ref_id}-{sub_batch_index}"
-        
-        logger.info("Sending batch chunk %d (size: %d, key: %s)", sub_batch_index, len(batch_params), idempotency_key)
-        
+            db.session.add(log)
+            email_results.append({"resident": res.name, "email_sent": False})
         try:
-            # Permissive validation so if one email is bad, the rest still go through
-            options = {
-                "idempotency_key": idempotency_key,
-                "batch_validation": "permissive"
-            }
-            
-            response = resend.Batch.send(batch_params, options=options)
-            response_data = response.get("data", [])
-            response_errors = response.get("errors", [])
-            
-            # Map failed indices for error logging
-            failed_indices = {err.get("index") for err in response_errors if "index" in err}
-            error_by_index = {err.get("index"): err.get("message") for err in response_errors if "index" in err}
-            
-            success_data_iter = iter(response_data)
-            
-            for idx, (res, bill) in enumerate(batch_residents_bills):
-                if idx in failed_indices:
-                    reason = error_by_index.get(idx, "Validation failed")
-                    logger.error("Failed to send email to %s: %s", res.email, reason)
-                    
-                    log = EmailLog(
-                        recipient_email=res.email,
-                        resident_id=res.id,
-                        bill_id=bill.id,
-                        expenditure_id=expenditure.id if expenditure else None,
-                        status="failed",
-                        failure_reason=reason,
-                        sent_at=datetime.utcnow()
-                    )
-                    db.session.add(log)
-                    email_results.append({"resident": res.name, "email_sent": False})
-                else:
-                    msg_id = None
-                    try:
-                        success_item = next(success_data_iter)
-                        msg_id = success_item.get("id")
-                    except StopIteration:
-                        pass
-                    
-                    logger.info("Email sent to %s. Log Resend response: { 'id': '%s' }", res.email, msg_id or "unknown")
-                    
-                    log = EmailLog(
-                        recipient_email=res.email,
-                        resident_id=res.id,
-                        bill_id=bill.id,
-                        expenditure_id=expenditure.id if expenditure else None,
-                        status="success",
-                        message_id=msg_id,
-                        sent_at=datetime.utcnow()
-                    )
-                    db.session.add(log)
-                    email_results.append({"resident": res.name, "email_sent": True})
-            
             db.session.commit()
-            
-        except Exception as exc:
-            logger.error("Batch send request failed for chunk %d: %s", sub_batch_index, exc)
+        except Exception as commit_exc:
+            logger.error("Failed to commit SMTP connection failure logs: %s", commit_exc)
             db.session.rollback()
-            
-            # Log all as failed
-            for res, bill in batch_residents_bills:
+        return email_results
+
+    # Loop through and send
+    email_results = []
+    with server:
+        for resident, bill in residents_bills:
+            category_rows = ""
+            for idx, item in enumerate(expense_items):
+                cat_name = (
+                    item.custom_category
+                    if item.category == "other" and item.custom_category
+                    else item.category
+                )
+                bg = 'style="background-color: #f8fafc;"' if idx % 2 == 0 else ""
+                category_rows += f"""
+                <tr {bg} style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 10px 12px; color: #334155; text-align: left;">{html.escape(cat_name).title()}</td>
+                    <td align="right" style="padding: 10px 12px; color: #334155; font-weight: 600; text-align: right;">₹{float(item.amount):,.2f}</td>
+                </tr>"""
+
+            personalized_html = html_template.format(
+                from_date=html.escape(from_date_str),
+                to_date=html.escape(to_date_str),
+                apartment_name=html.escape(apartment_name),
+                admin_name=html.escape(admin.name),
+                resident_name=html.escape(resident.name),
+                category_rows=category_rows,
+                total_expenditure_formatted=f"{total_amount:,.2f}",
+                flat_number=html.escape(resident.house_number),
+                split_factor=f"{resident.split_number:.1f}",
+                included_houses=total_houses,
+                amount_payable_formatted=f"{float(bill.split_amount):,.2f}",
+                app_url=app_url
+            )
+
+            bill_subject = f"Expenditure Bill Generated — Flat {resident.house_number} — ₹{float(bill.split_amount):,.2f}"
+
+            try:
+                msg = EmailMessage()
+                msg["Subject"] = bill_subject
+                msg["From"] = from_address
+                msg["To"] = resident.email
+                msg.set_content(f"A new bill has been generated for your apartment. Please log in to view it.")
+                msg.add_alternative(personalized_html, subtype="html")
+
+                server.send_message(msg)
+
+                # Successful send
+                logger.info("Email sent to %s. Log SMTP response", resident.email)
                 log = EmailLog(
-                    recipient_email=res.email,
-                    resident_id=res.id,
+                    recipient_email=resident.email,
+                    resident_id=resident.id,
                     bill_id=bill.id,
                     expenditure_id=expenditure.id if expenditure else None,
-                    status="failed",
-                    failure_reason=str(exc),
+                    status="success",
+                    message_id=None,
                     sent_at=datetime.utcnow()
                 )
                 db.session.add(log)
-                email_results.append({"resident": res.name, "email_sent": False})
-            
-            try:
-                db.session.commit()
-            except Exception as commit_exc:
-                logger.error("Failed to commit fallback failure logs: %s", commit_exc)
-                db.session.rollback()
+                email_results.append({"resident": resident.name, "email_sent": True})
+
+            except Exception as send_exc:
+                logger.error("Failed to send email to %s: %s", resident.email, send_exc)
+                log = EmailLog(
+                    recipient_email=resident.email,
+                    resident_id=resident.id,
+                    bill_id=bill.id,
+                    expenditure_id=expenditure.id if expenditure else None,
+                    status="failed",
+                    failure_reason=str(send_exc),
+                    sent_at=datetime.utcnow()
+                )
+                db.session.add(log)
+                email_results.append({"resident": resident.name, "email_sent": False})
+
+        # Commit all logs
+        try:
+            db.session.commit()
+        except Exception as commit_exc:
+            logger.error("Failed to commit batch email logs: %s", commit_exc)
+            db.session.rollback()
 
     return email_results
